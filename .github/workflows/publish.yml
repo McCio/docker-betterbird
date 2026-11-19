@@ -1,0 +1,131 @@
+name: publish
+
+# The Betterbird version is not in the repo: each run resolves the current release from betterbird.eu,
+# builds it, and records it as a GitHub release. The daily run builds only when that release is missing.
+on:
+  push:
+    branches: [master]
+  schedule:
+    - cron: '17 5 * * *'   # daily: new Betterbird release?
+    - cron: '43 4 * * 1'   # weekly: rebuild for base-image updates
+  workflow_dispatch:
+
+env:
+  # one entry per image flavour: Betterbird language pack + session locale (LC_ALL)
+  LANGS: '[{"lang": "en-US", "locale": "en_US.UTF-8"}, {"lang": "it", "locale": "it_IT.UTF-8"}]'
+  DAILY: '17 5 * * *'
+
+jobs:
+  version:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    outputs:
+      image: ${{ steps.resolve.outputs.image }}
+      version: ${{ steps.resolve.outputs.version }}
+      date: ${{ steps.resolve.outputs.date }}
+      langs: ${{ steps.resolve.outputs.langs }}
+      build: ${{ steps.resolve.outputs.build }}
+      released: ${{ steps.resolve.outputs.released }}
+    steps:
+      - id: resolve
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          location=$(curl -fsI 'https://www.betterbird.eu/downloads/get.php?os=linux&lang=en-US&version=release' | grep -i '^location:')
+          version=$(sed -n 's|.*/betterbird-\(.*\)\.en-US\.linux-x86_64\.tar\.xz.*|\1|p' <<< "${location}")
+          if [[ ! "${version}" =~ ^[0-9] ]]; then
+            echo "::error::cannot parse a version from: ${location}"
+            exit 1
+          fi
+          released=false
+          gh release view "${version}" --repo "${GITHUB_REPOSITORY}" > /dev/null && released=true
+          build=true
+          [[ "${{ github.event.schedule }}" == "${DAILY}" && "${released}" == true ]] && build=false
+          echo "Betterbird ${version}, released: ${released}, build: ${build}" >> "$GITHUB_STEP_SUMMARY"
+          {
+            # registry names must be lowercase, expressions have no lower()
+            echo "image=ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/betterbird"
+            echo "version=${version}"
+            echo "date=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+            echo "langs=${LANGS}"
+            echo "build=${build}"
+            echo "released=${released}"
+          } >> "$GITHUB_OUTPUT"
+
+  build:
+    needs: version
+    if: needs.version.outputs.build == 'true'
+    strategy:
+      matrix:
+        lang: ${{ fromJSON(needs.version.outputs.langs) }}
+        arch:
+          - {name: amd64, runner: ubuntu-latest, dockerfile: Dockerfile}
+          - {name: arm64, runner: ubuntu-24.04-arm, dockerfile: Dockerfile.aarch64}
+    runs-on: ${{ matrix.arch.runner }}
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v7
+      - uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - id: tag
+        run: echo "suffix=$([ "${{ matrix.lang.lang }}" = "en-US" ] || echo "-${{ matrix.lang.lang }}")" >> "$GITHUB_OUTPUT"
+      - uses: docker/build-push-action@v7
+        with:
+          context: .
+          file: ${{ matrix.arch.dockerfile }}
+          build-args: |
+            BETTERBIRD_VERSION=${{ needs.version.outputs.version }}
+            BETTERBIRD_LANG=${{ matrix.lang.lang }}
+            BETTERBIRD_LOCALE=${{ matrix.lang.locale }}
+            BUILD_DATE=${{ needs.version.outputs.date }}
+          push: true
+          tags: ${{ needs.version.outputs.image }}:${{ needs.version.outputs.version }}${{ steps.tag.outputs.suffix }}-${{ matrix.arch.name }}
+
+  manifest:
+    needs: [version, build]
+    strategy:
+      matrix:
+        lang: ${{ fromJSON(needs.version.outputs.langs) }}
+    runs-on: ubuntu-latest
+    permissions:
+      packages: write
+    steps:
+      - uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Multi-arch tags
+        env:
+          IMAGE: ${{ needs.version.outputs.image }}
+          VERSION: ${{ needs.version.outputs.version }}
+        run: |
+          suffix=$([ "${{ matrix.lang.lang }}" = "en-US" ] || echo "-${{ matrix.lang.lang }}")
+          docker buildx imagetools create \
+            -t "${IMAGE}:${VERSION}${suffix}" \
+            -t "${IMAGE}:latest${suffix}" \
+            "${IMAGE}:${VERSION}${suffix}-amd64" \
+            "${IMAGE}:${VERSION}${suffix}-arm64"
+
+  release:
+    needs: [version, manifest]
+    if: needs.version.outputs.released == 'false'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - env:
+          GH_TOKEN: ${{ github.token }}
+          IMAGE: ${{ needs.version.outputs.image }}
+          VERSION: ${{ needs.version.outputs.version }}
+        run: |
+          langs=$(jq -r 'map(.lang) | join(", ")' <<< "${LANGS}")
+          gh release create "${VERSION}" --repo "${GITHUB_REPOSITORY}" --target "${GITHUB_SHA}" \
+            --title "Betterbird ${VERSION}" \
+            --notes "Images: \`${IMAGE}:${VERSION}\`, \`${IMAGE}:${VERSION}-<lang>\` for ${langs}."

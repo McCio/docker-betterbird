@@ -1,32 +1,52 @@
 FROM ghcr.io/linuxserver/baseimage-selkies:ubunturesolute
 
-# set version label
 ARG BUILD_DATE
-ARG VERSION
-ARG THUNDERBIRD_VERSION
-LABEL build_version="Linuxserver.io version:- ${VERSION} Build-date:- ${BUILD_DATE}"
-LABEL maintainer="thelamer"
+ARG BETTERBIRD_VERSION
+ARG BETTERBIRD_LANG=en-US
+ARG BETTERBIRD_LOCALE=en_US.UTF-8
+# override the base image's linuxserver.io labels; GHCR links the package to the source repo
+LABEL build_version="${BETTERBIRD_VERSION}-${BETTERBIRD_LANG} Build-date:- ${BUILD_DATE}" \
+      org.opencontainers.image.created="${BUILD_DATE}" \
+      maintainer="McCio" \
+      org.opencontainers.image.authors="McCio" \
+      org.opencontainers.image.title="Betterbird" \
+      org.opencontainers.image.description="Betterbird in the browser, fork of linuxserver/docker-thunderbird" \
+      org.opencontainers.image.source="https://github.com/McCio/docker-betterbird" \
+      org.opencontainers.image.url="https://github.com/McCio/docker-betterbird" \
+      org.opencontainers.image.documentation="https://github.com/McCio/docker-betterbird#readme" \
+      org.opencontainers.image.vendor="McCio" \
+      org.opencontainers.image.version="${BETTERBIRD_VERSION}"
 
-# title
-ENV TITLE=Thunderbird \
-    PIXELFLUX_WAYLAND=true
+# title; LC_ALL drives the session locale (base init copies it to LANG/LANGUAGE), -e LC_ALL overrides
+ENV TITLE=Betterbird \
+    PIXELFLUX_WAYLAND=true \
+    LC_ALL=${BETTERBIRD_LOCALE}
 
 RUN \
-  echo "**** add icon ****" && \
-  curl -o \
-    /usr/share/selkies/www/icon.png \
-    https://raw.githubusercontent.com/linuxserver/docker-templates/master/linuxserver.io/img/thunderbird-logo.png && \
   echo "**** install packages ****" && \
-  echo "Package: *" >> /etc/apt/preferences.d/thunderbird && \
-  echo "Pin: release o=LP-PPA-mozillateam" >> /etc/apt/preferences.d/thunderbird && \
-  echo "Pin-Priority: 1001" >> /etc/apt/preferences.d/thunderbird && \
-  echo "" >> /etc/apt/preferences.d/thunderbird && \
-  echo "Package: thunderbird" >> /etc/apt/preferences.d/thunderbird && \
-  echo "Pin: version 2:1snap*" >> /etc/apt/preferences.d/thunderbird && \
-  echo "Pin-Priority: -1" >> /etc/apt/preferences.d/thunderbird && \
-  add-apt-repository ppa:mozillateam/ppa && \
-  apt-get install -y \
-    "thunderbird${THUNDERBIRD_RELEASE:+=$THUNDERBIRD_RELEASE}" && \
+  apt-get update && \
+  apt-get install -y --no-install-recommends \
+    libasound2t64 \
+    libdbus-glib-1-2 \
+    libgtk-3-0t64 \
+    xz-utils && \
+  echo "**** install betterbird ****" && \
+  curl -fL -o \
+    /tmp/betterbird.tar.xz \
+    "https://www.betterbird.eu/downloads/LinuxArchive/betterbird-${BETTERBIRD_VERSION}.en-US.linux-x86_64.tar.xz" && \
+  tar xf /tmp/betterbird.tar.xz -C /opt && \
+  echo "**** install language ****" && \
+  if [ "${BETTERBIRD_LANG}" != "en-US" ]; then \
+    mkdir -p /opt/betterbird/distribution/extensions && \
+    curl -fL -o \
+      "/opt/betterbird/distribution/extensions/langpack-${BETTERBIRD_LANG}@betterbird.eu.xpi" \
+      "https://www.betterbird.eu/downloads/LanguagePacks/${BETTERBIRD_LANG}-${BETTERBIRD_VERSION}.xpi"; \
+  fi && \
+  mkdir -p /opt/betterbird/defaults/pref && \
+  echo "pref(\"intl.locale.requested\", \"${BETTERBIRD_LANG}\");" > /opt/betterbird/defaults/pref/locale.js && \
+  ln -s /opt/betterbird/betterbird /usr/bin/betterbird && \
+  echo "**** add icon ****" && \
+  cp /opt/betterbird/chrome/icons/default/default128.png /usr/share/selkies/www/icon.png && \
   echo "**** cleanup ****" && \
   apt-get autoclean && \
   rm -rf \
