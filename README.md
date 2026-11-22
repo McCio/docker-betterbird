@@ -21,7 +21,7 @@ Changes from upstream:
 | `latest`, `<version>` | English (en-US) |
 | `latest-it`, `<version>-it` | Italian language pack |
 
-`<version>` is the Betterbird version (e.g. `153.7.0esr-bb13`), with one [release](https://github.com/McCio/docker-betterbird/releases) per version. A daily check picks up new Betterbird releases. Every image is also rebuilt weekly for base-image updates, so a tag can move to a newer build of the same version (the build date is in the `build_version` label).
+`<version>` is the Betterbird version (e.g. `153.7.0esr-bb13`), with one [release](https://github.com/McCio/docker-betterbird/releases) per version. A daily check picks up new Betterbird releases, once the x86_64 and aarch64 archives and the language packs are all published (the aarch64 one lags). Every image is also rebuilt weekly for base-image updates, so a tag can move to a newer build of the same version (the build date is in the `build_version` label).
 
 ## Supported Architectures
 

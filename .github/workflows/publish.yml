@@ -42,7 +42,14 @@ jobs:
           gh release view "${version}" --repo "${GITHUB_REPOSITORY}" > /dev/null && released=true
           build=true
           [[ "${{ github.event.schedule }}" == "${DAILY}" && "${released}" == true ]] && build=false
-          echo "Betterbird ${version}, released: ${released}, build: ${build}" >> "$GITHUB_STEP_SUMMARY"
+          # betterbird.eu publishes the aarch64 archive and the language packs after the x86_64 one: wait for all of them instead of failing the build jobs
+          ready=true
+          curl -fsIL -o /dev/null "https://www.betterbird.eu/downloads/LinuxArchive/betterbird-${version%%.*}-linux-aarch64-built-with-glibc-2_36/betterbird-${version}.en-US.linux-aarch64.tar.xz" || ready=false
+          for lang in $(jq -r '.[].lang | select(. != "en-US")' <<< "${LANGS}"); do
+            curl -fsIL -o /dev/null "https://www.betterbird.eu/downloads/LanguagePacks/${lang}-${version}.xpi" || ready=false
+          done
+          [[ "${ready}" == false ]] && build=false
+          echo "Betterbird ${version}, released: ${released}, all artefacts published: ${ready}, build: ${build}" >> "$GITHUB_STEP_SUMMARY"
           {
             # registry names must be lowercase, expressions have no lower()
             echo "image=ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/betterbird"
